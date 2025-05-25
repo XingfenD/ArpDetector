@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"log"
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
@@ -15,6 +16,16 @@ func main() {
 		fmt.Println("Usage: detector <file>")
 		return
 	}
+
+	// 设置日志输出到抛弃
+	logFile, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0644)
+	if err != nil {
+		fmt.Println("无法打开日志文件:", err)
+		return
+	}
+	defer logFile.Close()
+	log.SetOutput(logFile)
+	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
 	handle, _ := pcap.OpenOffline(os.Args[1])
 
@@ -61,19 +72,30 @@ func main() {
 			dstMAC := mac2str(arp.DstHwAddress)
 
 			if arp.Operation == layers.ARPRequest {
-				if _, ok := arpRequests[srcIP]; !ok {
+				if _, ok := arpRequests[srcIP]; !ok { /* if the ip is not recorded */
 					arpRequests[srcIP] = make(map[string]int)
 				}
 				arpRequests[srcIP][dstMAC]++
+				if dstMAC == "80:0b:98:3b:b9:ec"{
+					log.Printf("ARP Request: %s (%s) -> %s (%s)\n", srcIP, srcMAC, dstIP, dstMAC)
+				}
 			} else if arp.Operation == layers.ARPReply {
-				if _, ok := arpRequests[dstIP]; !ok {
+				// log.Printf("ARP Reply: %s (%s) -> %s (%s)\n", srcIP, srcMAC, dstIP, dstMAC)
+				if _, ok := arpRequests[dstIP]; ok {
 					if arpRequests[dstIP][srcMAC] > 0 {
-						arpRequests[dstIP][srcMAC]--
+						arpRequests[dstIP][srcMAC]-- /* reduce the record */
 					} else {
 						arpMAC[srcMAC]++
+						// log.Printf("ARP Spoofing suspected from MAC: %s\n", srcMAC)
 					}
 				} else {
 					arpMAC[srcMAC]++
+					// log.Printf("ARP Spoofing suspected from MAC: %s\n", srcMAC)
+				}
+				if srcMAC == "80:0b:98:3b:b9:ec" {
+					log.Printf("ARP Reply: %s (%s) -> %s (%s)\n", srcIP, srcMAC, dstIP, dstMAC)
+					log.Printf("Unauthorized Reply From %s Count %d\n", srcMAC, arpMAC[srcMAC])
+					log.Printf("Request to %s Count %d", srcMAC, arpRequests[dstIP][srcMAC])
 				}
 			}
 		}
@@ -86,8 +108,10 @@ func main() {
 			fmt.Println(ip)
 		}
 	}
+
 	fmt.Println("Unauthorized ARP spoofers:")
 	for mac, count := range arpMAC {
+		log.Printf("ARP Spoofing suspected from MAC: %s, count:%d\n", mac, count)
 		if count > 5 {
 			fmt.Println(mac)
 		}
