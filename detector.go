@@ -27,6 +27,9 @@ func main() {
 		synAckCount int
 	}))
 
+	arpRequests := make(map[string](map[string]int))
+	arpMAC := make(map[string]int)
+
 	for packet := range packetSource.Packets() {
 		/* SYN detect */
 		tcpLayer := packet.Layer(layers.LayerTypeTCP)
@@ -51,8 +54,28 @@ func main() {
 
 		/* ARP detect */
 		if arpLayer != nil {
-			// arp, _ := arpLayer.(*layers.ARP)
+			arp, _ := arpLayer.(*layers.ARP)
+			srcIP := ip2str(arp.SourceProtAddress)
+			srcMAC := mac2str(arp.SourceHwAddress)
+			dstIP := ip2str(arp.DstProtAddress)
+			dstMAC := mac2str(arp.DstHwAddress)
 
+			if arp.Operation == layers.ARPRequest {
+				if _, ok := arpRequests[srcIP]; !ok {
+					arpRequests[srcIP] = make(map[string]int)
+				}
+				arpRequests[srcIP][dstMAC]++
+			} else if arp.Operation == layers.ARPReply {
+				if _, ok := arpRequests[dstIP]; !ok {
+					if arpRequests[dstIP][srcMAC] > 0 {
+						arpRequests[dstIP][srcMAC]--
+					} else {
+						arpMAC[srcMAC]++
+					}
+				} else {
+					arpMAC[srcMAC]++
+				}
+			}
 		}
 
 	}
@@ -64,4 +87,17 @@ func main() {
 		}
 	}
 	fmt.Println("Unauthorized ARP spoofers:")
+	for mac, count := range arpMAC {
+		if count > 5 {
+			fmt.Println(mac)
+		}
+	}
+}
+
+func ip2str(ip net.IP) string {
+	return fmt.Sprintf("%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3])
+}
+
+func mac2str(mac net.HardwareAddr) string {
+	return fmt.Sprintf("%02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5])
 }
